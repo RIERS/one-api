@@ -21,6 +21,7 @@ var (
 	UserId2GroupCacheSeconds  = config.SyncFrequency
 	UserId2QuotaCacheSeconds  = config.SyncFrequency
 	UserId2StatusCacheSeconds = config.SyncFrequency
+	GroupModelsCacheSeconds   = config.SyncFrequency
 )
 
 func CacheGetTokenByKey(key string) (*Token, error) {
@@ -146,6 +147,25 @@ func CacheIsUserEnabled(userId int) (bool, error) {
 	return userEnabled, err
 }
 
+func CacheGetGroupModels(ctx context.Context, group string) ([]string, error) {
+	if !common.RedisEnabled {
+		return GetGroupModels(ctx, group)
+	}
+	modelsStr, err := common.RedisGet(fmt.Sprintf("group_models:%s", group))
+	if err == nil {
+		return strings.Split(modelsStr, ","), nil
+	}
+	models, err := GetGroupModels(ctx, group)
+	if err != nil {
+		return nil, err
+	}
+	err = common.RedisSet(fmt.Sprintf("group_models:%s", group), strings.Join(models, ","), time.Duration(GroupModelsCacheSeconds)*time.Second)
+	if err != nil {
+		logger.SysError("Redis set group models error: " + err.Error())
+	}
+	return models, nil
+}
+
 var group2model2channels map[string]map[string][]*Channel
 var channelSyncLock sync.RWMutex
 
@@ -205,7 +225,7 @@ func SyncChannelCache(frequency int) {
 
 func CacheGetRandomSatisfiedChannel(group string, model string, ignoreFirstPriority bool) (*Channel, error) {
 	if !config.MemoryCacheEnabled {
-		return GetRandomSatisfiedChannel(group, model)
+		return GetRandomSatisfiedChannel(group, model, ignoreFirstPriority)
 	}
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()
