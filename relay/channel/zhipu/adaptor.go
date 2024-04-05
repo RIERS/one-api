@@ -6,8 +6,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/songquanpeng/one-api/relay/channel"
 	"github.com/songquanpeng/one-api/relay/channel/openai"
-	"github.com/songquanpeng/one-api/relay/constant"
 	"github.com/songquanpeng/one-api/relay/model"
+	"github.com/songquanpeng/one-api/relay/relaymode"
 	"github.com/songquanpeng/one-api/relay/util"
 	"io"
 	"math"
@@ -32,12 +32,15 @@ func (a *Adaptor) SetVersionByModeName(modelName string) {
 }
 
 func (a *Adaptor) GetRequestURL(meta *util.RelayMeta) (string, error) {
+	switch meta.Mode {
+	case relaymode.ImagesGenerations:
+		return fmt.Sprintf("%s/api/paas/v4/images/generations", meta.BaseURL), nil
+	case relaymode.Embeddings:
+		return fmt.Sprintf("%s/api/paas/v4/embeddings", meta.BaseURL), nil
+	}
 	a.SetVersionByModeName(meta.ActualModelName)
 	if a.APIVersion == "v4" {
 		return fmt.Sprintf("%s/api/paas/v4/chat/completions", meta.BaseURL), nil
-	}
-	if meta.Mode == constant.RelayModeEmbeddings {
-		return fmt.Sprintf("%s/api/paas/v4/embeddings", meta.BaseURL), nil
 	}
 	method := "invoke"
 	if meta.IsStream {
@@ -58,7 +61,7 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, relayMode int, request *model.G
 		return nil, errors.New("request is nil")
 	}
 	switch relayMode {
-	case constant.RelayModeEmbeddings:
+	case relaymode.Embeddings:
 		baiduEmbeddingRequest := ConvertEmbeddingRequest(*request)
 		return baiduEmbeddingRequest, nil
 	default:
@@ -81,7 +84,12 @@ func (a *Adaptor) ConvertImageRequest(request *model.ImageRequest) (any, error) 
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
-	return request, nil
+	newRequest := ImageRequest{
+		Model:  request.Model,
+		Prompt: request.Prompt,
+		UserId: request.User,
+	}
+	return newRequest, nil
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, meta *util.RelayMeta, requestBody io.Reader) (*http.Response, error) {
@@ -98,14 +106,21 @@ func (a *Adaptor) DoResponseV4(c *gin.Context, resp *http.Response, meta *util.R
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, meta *util.RelayMeta) (usage *model.Usage, err *model.ErrorWithStatusCode) {
+	switch meta.Mode {
+	case relaymode.Embeddings:
+		err, usage = EmbeddingsHandler(c, resp)
+		return
+	case relaymode.ImagesGenerations:
+		err, usage = openai.ImageHandler(c, resp)
+		return
+	}
 	if a.APIVersion == "v4" {
 		return a.DoResponseV4(c, resp, meta)
 	}
-
 	if meta.IsStream {
 		err, usage = StreamHandler(c, resp)
 	} else {
-		if meta.Mode == constant.RelayModeEmbeddings {
+		if meta.Mode == relaymode.Embeddings {
 			err, usage = EmbeddingsHandler(c, resp)
 		} else {
 			err, usage = Handler(c, resp)

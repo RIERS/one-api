@@ -10,8 +10,10 @@ import (
 	"github.com/songquanpeng/one-api/common/logger"
 	"github.com/songquanpeng/one-api/model"
 	"github.com/songquanpeng/one-api/relay/channel/openai"
+	"github.com/songquanpeng/one-api/relay/channeltype"
 	"github.com/songquanpeng/one-api/relay/constant"
 	relaymodel "github.com/songquanpeng/one-api/relay/model"
+	"github.com/songquanpeng/one-api/relay/relaymode"
 	"github.com/songquanpeng/one-api/relay/util"
 	"math"
 	"net/http"
@@ -23,10 +25,10 @@ func getAndValidateTextRequest(c *gin.Context, relayMode int) (*relaymodel.Gener
 	if err != nil {
 		return nil, err
 	}
-	if relayMode == constant.RelayModeModerations && textRequest.Model == "" {
+	if relayMode == relaymode.Moderations && textRequest.Model == "" {
 		textRequest.Model = "text-moderation-latest"
 	}
-	if relayMode == constant.RelayModeEmbeddings && textRequest.Model == "" {
+	if relayMode == relaymode.Embeddings && textRequest.Model == "" {
 		textRequest.Model = c.Param("model")
 	}
 	err = util.ValidateTextRequest(textRequest, relayMode)
@@ -54,9 +56,25 @@ func getImageRequest(c *gin.Context, relayMode int) (*relaymodel.ImageRequest, e
 	return imageRequest, nil
 }
 
+func isValidImageSize(model string, size string) bool {
+	if model == "cogview-3" {
+		return true
+	}
+	_, ok := constant.ImageSizeRatios[model][size]
+	return ok
+}
+
+func getImageSizeRatio(model string, size string) float64 {
+	ratio, ok := constant.ImageSizeRatios[model][size]
+	if !ok {
+		return 1
+	}
+	return ratio
+}
+
 func validateImageRequest(imageRequest *relaymodel.ImageRequest, meta *util.RelayMeta) *relaymodel.ErrorWithStatusCode {
 	// model validation
-	_, hasValidSize := constant.DalleSizeRatios[imageRequest.Model][imageRequest.Size]
+	hasValidSize := isValidImageSize(imageRequest.Model, imageRequest.Size)
 	if !hasValidSize {
 		return openai.ErrorWrapper(errors.New("size not supported for this image model"), "size_not_supported", http.StatusBadRequest)
 	}
@@ -64,13 +82,13 @@ func validateImageRequest(imageRequest *relaymodel.ImageRequest, meta *util.Rela
 	if imageRequest.Prompt == "" {
 		return openai.ErrorWrapper(errors.New("prompt is required"), "prompt_missing", http.StatusBadRequest)
 	}
-	if len(imageRequest.Prompt) > constant.DalleImagePromptLengthLimitations[imageRequest.Model] {
+	if len(imageRequest.Prompt) > constant.ImagePromptLengthLimitations[imageRequest.Model] {
 		return openai.ErrorWrapper(errors.New("prompt is too long"), "prompt_too_long", http.StatusBadRequest)
 	}
 	// Number of generated images validation
 	if !isWithinRange(imageRequest.Model, imageRequest.N) {
 		// channel not azure
-		if meta.ChannelType != common.ChannelTypeAzure {
+		if meta.ChannelType != channeltype.Azure {
 			return openai.ErrorWrapper(errors.New("invalid value of n"), "n_not_within_range", http.StatusBadRequest)
 		}
 	}
@@ -81,10 +99,7 @@ func getImageCostRatio(imageRequest *relaymodel.ImageRequest) (float64, error) {
 	if imageRequest == nil {
 		return 0, errors.New("imageRequest is nil")
 	}
-	imageCostRatio, hasValidSize := constant.DalleSizeRatios[imageRequest.Model][imageRequest.Size]
-	if !hasValidSize {
-		return 0, fmt.Errorf("size not supported for this image model: %s", imageRequest.Size)
-	}
+	imageCostRatio := getImageSizeRatio(imageRequest.Model, imageRequest.Size)
 	if imageRequest.Quality == "hd" && imageRequest.Model == "dall-e-3" {
 		if imageRequest.Size == "1024x1024" {
 			imageCostRatio *= 2
@@ -97,11 +112,11 @@ func getImageCostRatio(imageRequest *relaymodel.ImageRequest) (float64, error) {
 
 func getPromptTokens(textRequest *relaymodel.GeneralOpenAIRequest, relayMode int) int {
 	switch relayMode {
-	case constant.RelayModeChatCompletions:
+	case relaymode.ChatCompletions:
 		return openai.CountTokenMessages(textRequest.Messages, textRequest.Model)
-	case constant.RelayModeCompletions:
+	case relaymode.Completions:
 		return openai.CountTokenInput(textRequest.Prompt, textRequest.Model)
-	case constant.RelayModeModerations:
+	case relaymode.Moderations:
 		return openai.CountTokenInput(textRequest.Input, textRequest.Model)
 	}
 	return 0

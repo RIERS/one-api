@@ -11,6 +11,7 @@ import (
 	"github.com/songquanpeng/one-api/common/logger"
 	"github.com/songquanpeng/one-api/model"
 	"github.com/songquanpeng/one-api/relay/channel/openai"
+	"github.com/songquanpeng/one-api/relay/channeltype"
 	"github.com/songquanpeng/one-api/relay/constant"
 	"github.com/songquanpeng/one-api/relay/helper"
 	relaymodel "github.com/songquanpeng/one-api/relay/model"
@@ -20,12 +21,11 @@ import (
 )
 
 func isWithinRange(element string, value int) bool {
-	if _, ok := constant.DalleGenerationImageAmounts[element]; !ok {
+	if _, ok := constant.ImageGenerationAmounts[element]; !ok {
 		return false
 	}
-	min := constant.DalleGenerationImageAmounts[element][0]
-	max := constant.DalleGenerationImageAmounts[element][1]
-
+	min := constant.ImageGenerationAmounts[element][0]
+	max := constant.ImageGenerationAmounts[element][1]
 	return value >= min && value <= max
 }
 
@@ -56,7 +56,7 @@ func RelayImageHelper(c *gin.Context, relayMode int) *relaymodel.ErrorWithStatus
 	}
 
 	var requestBody io.Reader
-	if isModelMapped || meta.ChannelType == common.ChannelTypeAzure { // make Azure channel request body
+	if isModelMapped || meta.ChannelType == channeltype.Azure { // make Azure channel request body
 		jsonStr, err := json.Marshal(imageRequest)
 		if err != nil {
 			return openai.ErrorWrapper(err, "marshal_image_request_failed", http.StatusInternalServerError)
@@ -72,16 +72,15 @@ func RelayImageHelper(c *gin.Context, relayMode int) *relaymodel.ErrorWithStatus
 	}
 
 	switch meta.ChannelType {
-	case common.ChannelTypeAli:
+	case channeltype.Ali:
 		fallthrough
-	case common.ChannelTypeBaidu:
+	case channeltype.Baidu:
 		fallthrough
-	case common.ChannelTypeZhipu:
+	case channeltype.Zhipu:
 		finalRequest, err := adaptor.ConvertImageRequest(imageRequest)
 		if err != nil {
 			return openai.ErrorWrapper(err, "convert_image_request_failed", http.StatusInternalServerError)
 		}
-
 		jsonStr, err := json.Marshal(finalRequest)
 		if err != nil {
 			return openai.ErrorWrapper(err, "marshal_image_request_failed", http.StatusInternalServerError)
