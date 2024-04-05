@@ -7,31 +7,30 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
-	"github.com/songquanpeng/one-api/common"
 	"github.com/songquanpeng/one-api/common/logger"
 	"github.com/songquanpeng/one-api/model"
-	"github.com/songquanpeng/one-api/relay/channel/openai"
+	"github.com/songquanpeng/one-api/relay"
+	"github.com/songquanpeng/one-api/relay/adaptor/openai"
+	billingratio "github.com/songquanpeng/one-api/relay/billing/ratio"
 	"github.com/songquanpeng/one-api/relay/channeltype"
-	"github.com/songquanpeng/one-api/relay/constant"
-	"github.com/songquanpeng/one-api/relay/helper"
+	"github.com/songquanpeng/one-api/relay/meta"
 	relaymodel "github.com/songquanpeng/one-api/relay/model"
-	"github.com/songquanpeng/one-api/relay/util"
 	"io"
 	"net/http"
 )
 
 func isWithinRange(element string, value int) bool {
-	if _, ok := constant.ImageGenerationAmounts[element]; !ok {
+	if _, ok := billingratio.ImageGenerationAmounts[element]; !ok {
 		return false
 	}
-	min := constant.ImageGenerationAmounts[element][0]
-	max := constant.ImageGenerationAmounts[element][1]
+	min := billingratio.ImageGenerationAmounts[element][0]
+	max := billingratio.ImageGenerationAmounts[element][1]
 	return value >= min && value <= max
 }
 
 func RelayImageHelper(c *gin.Context, relayMode int) *relaymodel.ErrorWithStatusCode {
 	ctx := c.Request.Context()
-	meta := util.GetRelayMeta(c)
+	meta := meta.GetByContext(c)
 	imageRequest, err := getImageRequest(c, meta.Mode)
 	if err != nil {
 		logger.Errorf(ctx, "getImageRequest failed: %s", err.Error())
@@ -41,7 +40,7 @@ func RelayImageHelper(c *gin.Context, relayMode int) *relaymodel.ErrorWithStatus
 	// map model name
 	var isModelMapped bool
 	meta.OriginModelName = imageRequest.Model
-	imageRequest.Model, isModelMapped = util.GetMappedModelName(imageRequest.Model, meta.ModelMapping)
+	imageRequest.Model, isModelMapped = getMappedModelName(imageRequest.Model, meta.ModelMapping)
 	meta.ActualModelName = imageRequest.Model
 
 	// model validation
@@ -66,7 +65,7 @@ func RelayImageHelper(c *gin.Context, relayMode int) *relaymodel.ErrorWithStatus
 		requestBody = c.Request.Body
 	}
 
-	adaptor := helper.GetAdaptor(meta.APIType)
+	adaptor := relay.GetAdaptor(meta.APIType)
 	if adaptor == nil {
 		return openai.ErrorWrapper(fmt.Errorf("invalid api type: %d", meta.APIType), "invalid_api_type", http.StatusBadRequest)
 	}
@@ -88,8 +87,8 @@ func RelayImageHelper(c *gin.Context, relayMode int) *relaymodel.ErrorWithStatus
 		requestBody = bytes.NewBuffer(jsonStr)
 	}
 
-	modelRatio := common.GetModelRatio(imageRequest.Model)
-	groupRatio := common.GetGroupRatio(meta.Group)
+	modelRatio := billingratio.GetModelRatio(imageRequest.Model)
+	groupRatio := billingratio.GetGroupRatio(meta.Group)
 	ratio := modelRatio * groupRatio
 	userQuota, err := model.CacheGetUserQuota(ctx, meta.UserId)
 

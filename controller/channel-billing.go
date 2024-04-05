@@ -4,13 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/songquanpeng/one-api/common"
 	"github.com/songquanpeng/one-api/common/config"
 	"github.com/songquanpeng/one-api/common/logger"
 	"github.com/songquanpeng/one-api/model"
 	"github.com/songquanpeng/one-api/monitor"
 	"github.com/songquanpeng/one-api/relay/channeltype"
-	"github.com/songquanpeng/one-api/relay/util"
+	"github.com/songquanpeng/one-api/relay/client"
 	"io"
 	"net/http"
 	"strconv"
@@ -97,7 +96,7 @@ func GetResponseBody(method, url string, channel *model.Channel, headers http.He
 	for k := range headers {
 		req.Header.Add(k, headers.Get(k))
 	}
-	res, err := util.HTTPClient.Do(req)
+	res, err := client.HTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +204,7 @@ func updateChannelAIGC2DBalance(channel *model.Channel) (float64, error) {
 }
 
 func updateChannelBalance(channel *model.Channel) (float64, error) {
-	baseURL := common.ChannelBaseURLs[channel.Type]
+	baseURL := channeltype.ChannelBaseURLs[channel.Type]
 	if channel.GetBaseURL() == "" {
 		channel.BaseURL = &baseURL
 	}
@@ -302,7 +301,7 @@ func updateAllChannelsBalance() error {
 		return err
 	}
 	for _, channel := range channels {
-		if channel.Status != common.ChannelStatusEnabled {
+		if channel.Status != model.ChannelStatusEnabled {
 			continue
 		}
 		// TODO: support Azure

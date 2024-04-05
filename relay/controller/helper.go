@@ -9,12 +9,13 @@ import (
 	"github.com/songquanpeng/one-api/common/config"
 	"github.com/songquanpeng/one-api/common/logger"
 	"github.com/songquanpeng/one-api/model"
-	"github.com/songquanpeng/one-api/relay/channel/openai"
+	"github.com/songquanpeng/one-api/relay/adaptor/openai"
+	billingratio "github.com/songquanpeng/one-api/relay/billing/ratio"
 	"github.com/songquanpeng/one-api/relay/channeltype"
-	"github.com/songquanpeng/one-api/relay/constant"
+	"github.com/songquanpeng/one-api/relay/controller/validator"
+	"github.com/songquanpeng/one-api/relay/meta"
 	relaymodel "github.com/songquanpeng/one-api/relay/model"
 	"github.com/songquanpeng/one-api/relay/relaymode"
-	"github.com/songquanpeng/one-api/relay/util"
 	"math"
 	"net/http"
 )
@@ -31,7 +32,7 @@ func getAndValidateTextRequest(c *gin.Context, relayMode int) (*relaymodel.Gener
 	if relayMode == relaymode.Embeddings && textRequest.Model == "" {
 		textRequest.Model = c.Param("model")
 	}
-	err = util.ValidateTextRequest(textRequest, relayMode)
+	err = validator.ValidateTextRequest(textRequest, relayMode)
 	if err != nil {
 		return nil, err
 	}
@@ -60,19 +61,19 @@ func isValidImageSize(model string, size string) bool {
 	if model == "cogview-3" {
 		return true
 	}
-	_, ok := constant.ImageSizeRatios[model][size]
+	_, ok := billingratio.ImageSizeRatios[model][size]
 	return ok
 }
 
 func getImageSizeRatio(model string, size string) float64 {
-	ratio, ok := constant.ImageSizeRatios[model][size]
+	ratio, ok := billingratio.ImageSizeRatios[model][size]
 	if !ok {
 		return 1
 	}
 	return ratio
 }
 
-func validateImageRequest(imageRequest *relaymodel.ImageRequest, meta *util.RelayMeta) *relaymodel.ErrorWithStatusCode {
+func validateImageRequest(imageRequest *relaymodel.ImageRequest, meta *meta.Meta) *relaymodel.ErrorWithStatusCode {
 	// model validation
 	hasValidSize := isValidImageSize(imageRequest.Model, imageRequest.Size)
 	if !hasValidSize {
@@ -82,7 +83,7 @@ func validateImageRequest(imageRequest *relaymodel.ImageRequest, meta *util.Rela
 	if imageRequest.Prompt == "" {
 		return openai.ErrorWrapper(errors.New("prompt is required"), "prompt_missing", http.StatusBadRequest)
 	}
-	if len(imageRequest.Prompt) > constant.ImagePromptLengthLimitations[imageRequest.Model] {
+	if len(imageRequest.Prompt) > billingratio.ImagePromptLengthLimitations[imageRequest.Model] {
 		return openai.ErrorWrapper(errors.New("prompt is too long"), "prompt_too_long", http.StatusBadRequest)
 	}
 	// Number of generated images validation
@@ -130,7 +131,7 @@ func getPreConsumedQuota(textRequest *relaymodel.GeneralOpenAIRequest, promptTok
 	return int64(float64(preConsumedTokens) * ratio)
 }
 
-func preConsumeQuota(ctx context.Context, textRequest *relaymodel.GeneralOpenAIRequest, promptTokens int, ratio float64, meta *util.RelayMeta) (int64, *relaymodel.ErrorWithStatusCode) {
+func preConsumeQuota(ctx context.Context, textRequest *relaymodel.GeneralOpenAIRequest, promptTokens int, ratio float64, meta *meta.Meta) (int64, *relaymodel.ErrorWithStatusCode) {
 	preConsumedQuota := getPreConsumedQuota(textRequest, promptTokens, ratio)
 
 	userQuota, err := model.CacheGetUserQuota(ctx, meta.UserId)
@@ -159,13 +160,13 @@ func preConsumeQuota(ctx context.Context, textRequest *relaymodel.GeneralOpenAIR
 	return preConsumedQuota, nil
 }
 
-func postConsumeQuota(ctx context.Context, usage *relaymodel.Usage, meta *util.RelayMeta, textRequest *relaymodel.GeneralOpenAIRequest, ratio float64, preConsumedQuota int64, modelRatio float64, groupRatio float64) {
+func postConsumeQuota(ctx context.Context, usage *relaymodel.Usage, meta *meta.Meta, textRequest *relaymodel.GeneralOpenAIRequest, ratio float64, preConsumedQuota int64, modelRatio float64, groupRatio float64) {
 	if usage == nil {
 		logger.Error(ctx, "usage is nil, which is unexpected")
 		return
 	}
 	var quota int64
-	completionRatio := common.GetCompletionRatio(textRequest.Model)
+	completionRatio := billingratio.GetCompletionRatio(textRequest.Model)
 	promptTokens := usage.PromptTokens
 	completionTokens := usage.CompletionTokens
 	quota = int64(math.Ceil((float64(promptTokens) + float64(completionTokens)*completionRatio) * ratio))
@@ -191,4 +192,15 @@ func postConsumeQuota(ctx context.Context, usage *relaymodel.Usage, meta *util.R
 	model.RecordConsumeLog(ctx, meta.UserId, meta.ChannelId, promptTokens, completionTokens, textRequest.Model, meta.TokenName, quota, logContent)
 	model.UpdateUserUsedQuotaAndRequestCount(meta.UserId, quota)
 	model.UpdateChannelUsedQuota(meta.ChannelId, quota)
+}
+
+func getMappedModelName(modelName string, mapping map[string]string) (string, bool) {
+	if mapping == nil {
+		return modelName, false
+	}
+	mappedModelName := mapping[modelName]
+	if mappedModelName != "" {
+		return mappedModelName, true
+	}
+	return modelName, false
 }
