@@ -66,6 +66,17 @@ func ConvertEmbeddingRequest(request model.GeneralOpenAIRequest) *EmbeddingReque
 	}
 }
 
+func ConvertImageRequest(request model.ImageRequest) *ImageRequest {
+	var imageRequest ImageRequest
+	imageRequest.Input.Prompt = request.Prompt
+	imageRequest.Model = request.Model
+	imageRequest.Parameters.Size = strings.Replace(request.Size, "x", "*", -1)
+	imageRequest.Parameters.N = request.N
+	imageRequest.ResponseFormat = request.ResponseFormat
+
+	return &imageRequest
+}
+
 func EmbeddingHandler(c *gin.Context, resp *http.Response) (*model.ErrorWithStatusCode, *model.Usage) {
 	var aliResponse EmbeddingResponse
 	err := json.NewDecoder(resp.Body).Decode(&aliResponse)
